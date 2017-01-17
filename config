@@ -1,0 +1,5 @@
+ngx_addon_name=ngx_http_uniqid_module
+HTTP_MODULES="$HTTP_MODULES ngx_http_uniqid_module"
+NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_http_uniqid_module.c $ngx_addon_dir/uniqid_hex.c $ngx_addon_dir/uniqid_msgpack.c $ngx_addon_dir/uniqid_request.c $ngx_addon_dir/uniqid_udp.c $ngx_addon_dir/uniqid_zip.c $ngx_addon_dir/uniqid_id.c"
+NGX_ADDON_DEPS="$NGX_ADDON_DEPS $ngx_addon_dir/uniqid_hex.h $ngx_addon_dir/uniqid_msgpack.h $ngx_addon_dir/uniqid_request.h $ngx_addon_dir/uniqid_udp.h $ngx_addon_dir/uniqid_zip.h $ngx_addon_dir/uniqid_id.h"
+CORE_LIBS="$CORE_LIBS -lmsgpackc -lz"
