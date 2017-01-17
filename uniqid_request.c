@@ -236,13 +236,16 @@ uint16_t uniqid_request_get_localport(ngx_http_request_t *r)
 char *uniqid_request_get_peerip_real(ngx_http_request_t *r)
 {
 	char *ip;
+	int size = r->connection->addr_text.len;
 	//TODO: ipv6
 	ip = ngx_pnalloc(r->pool, 16);
 	if (ip == NULL) {
 		return NULL;
 	}
-	memcpy(ip, r->connection->addr_text.data, 16);
-	ip[15] = 0;
+	
+	memset(ip, 0, 16);
+	memcpy(ip, r->connection->addr_text.data, (size < 16) ? size : 16);
+	//ip[15] = 0;
 	return ip;
 }
 

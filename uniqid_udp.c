@@ -8,7 +8,26 @@
 #include "uniqid_hex.h"
 #include <arpa/inet.h>
 
-uniqid_udp_data *uniqid_generate_data(uniqid *uid, uint16_t dlen, uint8_t *data)
+//uniqid_udp_data *uniqid_generate_data(uniqid *uid, uint16_t dlen, uint8_t *data)
+//{
+//	int ret;
+//	uniqid_udp_data *udata;
+//	char buf[INET_ADDRSTRLEN];
+//
+//	udata = malloc(sizeof(uniqid_udp_data) + dlen);
+//	if (udata == NULL) {
+//		return NULL;
+//	}
+//
+//	memset(udata, 0, sizeof(uniqid_udp_data) + dlen);
+//
+//	memcpy(udata->key, uid, UNIQID_SIZE);
+//	udata->vlen = dlen;
+//	memcpy(udata->value, data, dlen);
+//	return udata;
+//}
+
+uniqid_udp_data *uniqid_generate_data(uniqid *uid, uniqid *puid, char *pip, uint16_t pport, char *lip, uint16_t lport, uint16_t dlen, uint8_t *data)
 {
 	int ret;
 	uniqid_udp_data *udata;
@@ -16,14 +35,40 @@ uniqid_udp_data *uniqid_generate_data(uniqid *uid, uint16_t dlen, uint8_t *data)
 
 	udata = malloc(sizeof(uniqid_udp_data) + dlen);
 	if (udata == NULL) {
+		fprintf(stderr, "generate data malloc failed\n");
 		return NULL;
 	}
-
 	memset(udata, 0, sizeof(uniqid_udp_data) + dlen);
 
-	memcpy(udata->key, uid, UNIQID_SIZE);
-	udata->vlen = dlen;
-	memcpy(udata->value, data, dlen);
+	memcpy(udata, uid, UNIQID_SIZE);
+	if (puid) {
+		memcpy(udata->puid, puid, UNIQID_SIZE);
+	}
+
+	memset(buf, 0, INET_ADDRSTRLEN);
+	ret = inet_pton(AF_INET, pip, buf);
+	if (ret <= 0) {
+		free(udata);
+		fprintf(stderr, "pton pip failed\n");
+		return NULL;
+	}
+	memcpy(udata->pip, buf, 4);
+	//udata->pport = pport;
+	udata->pport = htons(pport);
+	//fprintf(stderr, "pport is %u, %u, after %u\n", pport, udata->pport, ntohs(udata->pport));
+	ret = inet_pton(AF_INET, lip, buf);
+	if (ret <= 0) {
+		free(udata);
+		fprintf(stderr, "pton lip failed\n");
+		return NULL;
+	}
+	memcpy(udata->lip, buf, 4);
+	//udata->lport = lport;
+	udata->lport = htons(lport);
+ 	//udata->dlen = dlen;
+	udata->dlen = htons(dlen);
+	memcpy(udata->data, data, dlen);
+
 	return udata;
 }
 

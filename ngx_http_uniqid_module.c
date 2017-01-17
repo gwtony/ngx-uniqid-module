@@ -3,11 +3,9 @@
 #include <ngx_http.h>
 #include <sys/time.h>
 
-#include "uniqid_zip.h"
 #include "uniqid_udp.h"
 #include "uniqid_request.h"
 #include "uniqid_id.h"
-#include "uniqid_msgpack.h"
 
 #define DEFAULT_USERVER_NUM 10
 
@@ -42,24 +40,12 @@ static ngx_http_variable_t uniqid_variables[] = {
 };
 
 typedef struct {
-	int sd;
-	ngx_str_t usip;
-	uint16_t  usport;
-	struct sockaddr_in addr;
-} userver_t;
-
-typedef struct {
 	int off;
-	//int sd;
-	//char usip[16];
-	//ngx_str_t usip;
-	//uint16_t  usport;
-	userver_t *uservers;
-	int userver_len;
+	int sd;
+	struct sockaddr_un addr;
+	ngx_str_t socket_path;
 
 	char local_ip[16];
-	//struct sockaddr_in *addr;
-	uniqid_msgpack_ctx *mctx;
 } ngx_http_uniqid_conf_t; 
 
 typedef struct {
@@ -181,55 +167,26 @@ ngx_http_uniqid_handler(ngx_http_request_t *r)
 	pid = uniqid_request_get_pid();
 	time_ms = uniqid_request_get_timems();
 	uid = uniqid_request_generate_uid(uscf->local_ip);
+	ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid uid is %s", uid);
+
 	puid = uniqid_request_get_uid(r);
 	pip = uniqid_request_get_peerip(r);
 	pport = uniqid_request_get_peerport(r);
 	lip = uscf->local_ip;
 	lport = uniqid_request_get_localport(r);
 	
+	ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid pport is %d, lport is %d", pport, lport);
+	
 	raw = ngx_http_uniqid_get_rawheader(r);
 
-    header_zipped = ngx_pcalloc(r->pool, raw.len);
-	ret = uniqid_zip(raw.data, raw.len, header_zipped);
-	if (ret < 0) {
-		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid zip failed");
-		return NGX_DECLINED;
-	}
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid data zipped from %d to %d", raw.len, ret);
+	udata = uniqid_generate_data(uid, puid, pip, pport, lip, lport, raw.len, raw.data);
+	size = UNIQID_DATA_SIZE + raw.len;
 
-	ret = uniqid_generate_msgpack(uscf->mctx, (char *)uid, (char *)puid, pip, pport, lip, lport, header_zipped, ret);
-	if (ret < 0) {
-		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid encode data to msgpack failed");
-		return NGX_DECLINED;
-	}
-	//free(uid);
-
-	data = uniqid_get_msgpack_data(uscf->mctx);
-	size = uniqid_get_msgpack_size(uscf->mctx);
-	
-
-	//debug
-	//msgpack_zone_init(&mempool, 2048);
-	//ret = msgpack_unpack(data, size, NULL, &mempool, &deserialized);
-	//msgpack_object_print(stderr, deserialized);
-
-	udata = uniqid_generate_data(uid, size, data);
-	size += UNIQID_DATA_SIZE;
-
-	//TODO: uid 
-	i = uniqid_request_uid_hash(uid, uscf->userver_len);
-	//ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "i is %d", i);
-	fprintf(stderr, "i is %d\n", i);
-	//i = 0;
-	ret = uniqid_udp_send(uscf->uservers[i].sd, udata, size, &uscf->uservers[i].addr);
+	ret = sendto(uscf->sd, udata, size, MSG_DONTWAIT, (struct sockaddr *)&uscf->addr, sizeof(struct sockaddr));
 	if (ret < size) {
-		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid udp send failed: %d", ret);
-	} else {
-		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid udp send success: %d", ret);
+		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid send to unix socket failed: %d(%d)[%d], %s", ret, errno, EFAULT, strerror(errno));
 	}
 
-	uniqid_destroy_msgpack_buffer(uscf->mctx);
-	
 	free(udata);
 	ctx->done = 1;
 	ngx_http_set_ctx(r, ctx, ngx_http_uniqid_module);
@@ -287,23 +244,9 @@ ngx_http_uniqid_srv_create_conf(ngx_conf_t *cf)
 	
 
 	conf->off = 1;
-	//conf->uservers = ngx_pcalloc(cf->pool, sizeof(userver_t) * DEFAULT_USERVER_NUM);
-	//if (conf->uservers == NULL) {
-	//	return NGX_CONF_ERROR;
-	//}
-
-	//conf->sd = uniqid_udp_socket();
-	//if (conf->sd < 0) {
-	//	ngx_log_error(NGX_LOG_ERR, cf->log, 0, "init uniqid socket failed");
-	//	return NGX_CONF_ERROR;
-	//}
-	//conf->usip.data = NULL;
-	//conf->usip.len = 0;
-	conf->mctx = uniqid_msgpack_ctx_init();
-	if (conf->mctx == NULL) {
-		ngx_log_error(NGX_LOG_ERR, cf->log, 0, "init uniqid msgpack ctx failed");
-		return NGX_CONF_ERROR;
-	}
+	conf->socket_path.len = 0;
+	conf->sd = -1;
+	memset(&conf->addr, 0, sizeof(conf->addr));
 
     return conf;
 }
@@ -343,88 +286,39 @@ static char *
 ngx_http_uniqid_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
 	int 				  i, len, uspos = 0;
-	char *pos, *cur, *sep, ip[32];
+	int ret;
+	//char *pos, *cur, *sep, ip[32];
     ngx_str_t            *value;
-	userver_t *us;
+	char path[1024];
+	//userver_t *us;
     ngx_http_uniqid_conf_t *uscf = conf;
 
-    if (uscf->userver_len != 0) {
+    if (uscf->socket_path.len != 0) {
         return "is duplicate";
     }
 
     value = cf->args->elts;
 
 	for (i = 1; i < cf->args->nelts; i++) {
-		if (ngx_strncmp(value[i].data, "uniqid://", 9) == 0) {
+		if (ngx_strncmp(value[i].data, "/", 1) == 0) {
 			uscf->off = 0;
-			cur = value[i].data + 9;
-			len = 1;
+			uscf->socket_path.data = value[i].data;
+			uscf->socket_path.len = value[i].len;
+			memset(path, 0, 1024);
+			memcpy(path, value[i].data, value[i].len);
 
-			sep = cur;
-			while (sep = strchr(sep, ',')) {
-				len++;
-				sep = sep + 1;
-			}
-			uscf->userver_len = len;
-			uscf->uservers = (userver_t *)ngx_pcalloc(cf->pool, sizeof(userver_t) * len);
-			if (uscf->uservers == NULL) {
+			uscf->sd = socket(AF_UNIX, SOCK_DGRAM, 0);
+			if (uscf->sd < 0) {
 				return NGX_CONF_ERROR;
 			}
 
-			while (sep = strchr(cur, ',')) {
-				if ((pos = strchr(cur, ':')) == NULL) {
-					return "no port in uniqid address";
-				}
-				len = pos - cur;
-				if (len >= 16) {
-					return "ip is too long";
-				}
-
-				us = &uscf->uservers[uspos];
-				us->usip.data = cur;
-				us->usip.len = len;
-				us->usport = ngx_atoi(pos + 1, sep - pos - 1);
-				if (us->usport <= 0 || us->usport > 65535) {
-					return "invalid port in uniqid address";
-				}
-				memcpy(ip, us->usip.data, us->usip.len);
-				ip[us->usip.len] = 0;
-				uniqid_udp_addr(ip, us->usport, &us->addr);
-
-				us->sd = uniqid_udp_socket();
-				if (us->sd < 0) {
-					return "init uniqid socket failed";
-				}
-
-				uspos++;
-				cur = sep + 1;
-			}
-
-			if ((pos = strchr(cur, ':')) == NULL) {
-				return "no port in uniqid address";
-			}
-			len = pos - cur;
-			if (len >= 16) {
-				return "ip is too long";
-			}
-			us = &uscf->uservers[uspos];
-			us->usip.data = cur;
-			us->usip.len = len;
-			us->usport = ngx_atoi(pos + 1, value[i].len - ((u_char *)pos + 1 - value[i].data));
-			if (us->usport <= 0 || us->usport > 65535) {
-				return "invalid port in uniqid address";
-			}
-			memcpy(ip, us->usip.data, us->usip.len);
-			ip[us->usip.len] = 0;
-			uniqid_udp_addr(ip, us->usport, &us->addr);
-			us->sd = uniqid_udp_socket();
-			if (us->sd < 0) {
-				return "init uniqid socket failed";
-			}
+			uscf->addr.sun_family = AF_UNIX;
+			strncpy(uscf->addr.sun_path, path, sizeof(uscf->addr.sun_path));
 
 			continue;
 		}
 	}
+
 
 	return NGX_CONF_OK;
 }

@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 //#include <ngx_core.h>
 #include <sys/socket.h>
+#include <ngx_config.h>
 
 #include "uniqid_id.h"
 
@@ -15,6 +16,7 @@ uniqid *uniqid_generate_uid(uint8_t magic, char *ip, uintptr_t time_ms, pid_t pi
 	uniqid *id;
 	char buf[UNIQID_SIZE], hbuf[UNIQID_SIZE];
 	unsigned char ip_buf[sizeof(struct in_addr)];
+	long int srcrand;
 
 	id = calloc(1, sizeof(uniqid));
 	if (id == NULL) {
@@ -27,7 +29,12 @@ uniqid *uniqid_generate_uid(uint8_t magic, char *ip, uintptr_t time_ms, pid_t pi
 		return NULL;
 	}
 
-	rand = (uint16_t)rand_r((unsigned int *)&time_ms);
+	//srand((unsigned)time(NULL));
+	//srcrand = random();
+	//fprintf(stderr, "random is %ld\n", srcrand);
+	
+	rand = (uint16_t)ngx_random();
+
 	fprintf(stderr, "generate uid rand is %u\n", rand);
 
 	memset(buf, 0, UNIQID_SIZE);
