@@ -9,7 +9,6 @@ pid_t uniqid_request_get_pid();
 
 uint64_t uniqid_request_get_timems();
 
-//uniqid *uniqid_generate_uid(uint8_t magic, char *ip, uintptr_t time_ms, pid_t pid);
 uniqid *uniqid_request_generate_uid(char *ip);
 uniqid *uniqid_request_get_uid(ngx_http_request_t *r);
 

@@ -30,7 +30,7 @@ static ngx_command_t ngx_http_uniqid_commands[] = {
 };
 
 static ngx_http_variable_t uniqid_variables[] = {
-    { ngx_string("uniqid_result"),
+    { ngx_string("uniqid_id"),
         NULL, uniqid_get,
         0,
         0,
@@ -49,7 +49,7 @@ typedef struct {
 } ngx_http_uniqid_conf_t; 
 
 typedef struct {
-	ngx_str_t result;
+	char result[UNIQID_SIZE];
 	ngx_int_t done;
 } ngx_http_uniqid_ctx_t;
 
@@ -136,11 +136,7 @@ ngx_http_uniqid_handler(ngx_http_request_t *r)
 	ngx_str_t key = ngx_string("Uniqid"), value;
 
 	int i;
-	//msgpack_zone mempool;
-	//uniqid_msgpack_data umd;
-	//msgpack_object deserialized;
 
-	//gettimeofday(&begin, NULL);
 	uscf = ngx_http_get_module_srv_conf(r, ngx_http_uniqid_module);
 
     if (uscf->off == 1) {
@@ -167,7 +163,7 @@ ngx_http_uniqid_handler(ngx_http_request_t *r)
 	pid = uniqid_request_get_pid();
 	time_ms = uniqid_request_get_timems();
 	uid = uniqid_request_generate_uid(uscf->local_ip);
-	ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid uid is %s", uid);
+	//ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid uid is %s", uid);
 
 	puid = uniqid_request_get_uid(r);
 	pip = uniqid_request_get_peerip(r);
@@ -175,7 +171,7 @@ ngx_http_uniqid_handler(ngx_http_request_t *r)
 	lip = uscf->local_ip;
 	lport = uniqid_request_get_localport(r);
 	
-	ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid pport is %d, lport is %d", pport, lport);
+	//ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid pport is %d, lport is %d", pport, lport);
 	
 	raw = ngx_http_uniqid_get_rawheader(r);
 
@@ -189,6 +185,8 @@ ngx_http_uniqid_handler(ngx_http_request_t *r)
 
 	free(udata);
 	ctx->done = 1;
+	strncpy(ctx->result, uid, UNIQID_SIZE);
+
 	ngx_http_set_ctx(r, ctx, ngx_http_uniqid_module);
 	
 	gettimeofday(&end, NULL);
@@ -328,21 +326,19 @@ static ngx_int_t uniqid_get(ngx_http_request_t *r, ngx_http_variable_value_t *v,
 	ngx_http_uniqid_ctx_t *ctx;
     ctx = ngx_http_get_module_ctx(r, ngx_http_uniqid_module);
 
-    if (ctx != NULL) {
-        //if (ctx->done) {
+    if (ctx != NULL && ctx->done) {
 		v->valid = 1;
 		v->no_cacheable = 0;
 		v->not_found = 0;
-		v->data = (void*)ctx->result.data;
-		v->len = ctx->result.len;
+		v->data = (void*)ctx->result;
+		v->len = UNIQID_SIZE;
 		return NGX_OK;
-		//}
 	}
 	v->valid = 0;
 	v->no_cacheable = 0;
 	v->not_found = 1;
 	v->data = NULL;
 	v->len = 0;
-	ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid result not found");
+	//ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid result not found");
 	return NGX_ERROR;
 }

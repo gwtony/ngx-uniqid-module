@@ -3,7 +3,6 @@
 #include <arpa/inet.h>
 #include <ngx_core.h>
 #include <sys/socket.h>
-//#include "uniqid_udp.h"
 #include "uniqid_request.h"
 
 int
@@ -138,10 +137,8 @@ int get_local_ip(char *buf)
 	struct ifaddrs *ifaddr, *ifa;
 	int family;
 	void *sa;
-	//char addr[INET_ADDRSTRLEN];
 
 	if (getifaddrs(&ifaddr) == -1) {
-		//perror("getifaddrs");
 		return -1;
 	}
 
@@ -154,7 +151,6 @@ int get_local_ip(char *buf)
 		if (family == AF_INET && !strncmp(ifa->ifa_name, "eth0", 4)) {
 			sa = &((struct sockaddr_in *)ifa->ifa_addr)->sin_addr;
 			inet_ntop(AF_INET, sa, buf, INET_ADDRSTRLEN);
-			//printf("%s IPV4 Address %s\n", ifa->ifa_name, addr);
 			freeifaddrs(ifaddr);
 			return 0;
 		}
@@ -371,9 +367,6 @@ uniqid *uniqid_request_generate_uid(char *ip)
 
 uint16_t uniqid_request_uid_hash(uniqid *id, int len)
 {
-	//uintptr_t time_ms;
 	uint16_t rand = id[0][26] + id[0][27] + id[0][28] + id[0][29];
-
-	fprintf(stderr, "hash rand is %u\n", rand);
 	return rand % len;
 }

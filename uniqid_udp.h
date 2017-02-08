@@ -3,12 +3,6 @@
 #include <stdint.h>
 #include "uniqid_id.h"
 
-//typedef struct {
-//	uniqid key;
-//	uint16_t vlen;
-//	uint8_t value[0];
-//} uniqid_udp_data;
-
 typedef struct {
 	uniqid uid;
 	uniqid puid;

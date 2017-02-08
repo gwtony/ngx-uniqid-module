@@ -1,9 +1,7 @@
-//#include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <arpa/inet.h>
-//#include <ngx_core.h>
 #include <sys/socket.h>
 #include <ngx_config.h>
 
@@ -29,13 +27,7 @@ uniqid *uniqid_generate_uid(uint8_t magic, char *ip, uintptr_t time_ms, pid_t pi
 		return NULL;
 	}
 
-	//srand((unsigned)time(NULL));
-	//srcrand = random();
-	//fprintf(stderr, "random is %ld\n", srcrand);
-	
 	rand = (uint16_t)ngx_random();
-
-	fprintf(stderr, "generate uid rand is %u\n", rand);
 
 	memset(buf, 0, UNIQID_SIZE);
 
