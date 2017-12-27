@@ -26,7 +26,7 @@ uint8_t *decode_from_hex(uint8_t *data, const char *src, int len)
 	int i;
 	char c;
 	unsigned value;
-	size_t outLen = len / 2;
+	//size_t outLen = len / 2;
 	uint8_t *out = data, accum = 0;
 
 	for (i = 0; i < len; ++i) {

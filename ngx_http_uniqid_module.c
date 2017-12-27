@@ -7,14 +7,14 @@
 #include "uniqid_request.h"
 #include "uniqid_id.h"
 
-#define DEFAULT_USERVER_NUM 10
+#define MAX_HEADER_SIZE 65536
 
 static void *ngx_http_uniqid_srv_create_conf(ngx_conf_t *cf);
-static char *ngx_http_uniqid_merge_conf(ngx_conf_t *cf, void *parent, void *child);
+//static char *ngx_http_uniqid_merge_conf(ngx_conf_t *cf, void *parent, void *child);
 static ngx_int_t ngx_http_uniqid_preconf(ngx_conf_t *cf);
 static ngx_int_t uniqid_add_variables(ngx_conf_t *cf);
 static ngx_int_t ngx_http_uniqid_init(ngx_conf_t *cf);
-static ngx_int_t ngx_http_uniqid_done(ngx_http_request_t *r, void *data, ngx_int_t rc);
+//static ngx_int_t ngx_http_uniqid_done(ngx_http_request_t *r, void *data, ngx_int_t rc);
 static char *ngx_http_uniqid_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t uniqid_get(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
 
@@ -41,6 +41,7 @@ static ngx_http_variable_t uniqid_variables[] = {
 
 typedef struct {
 	int off;
+	int id_only;
 	int sd;
 	struct sockaddr_un addr;
 	ngx_str_t socket_path;
@@ -52,6 +53,9 @@ typedef struct {
 	char result[UNIQID_SIZE];
 	ngx_int_t done;
 } ngx_http_uniqid_ctx_t;
+
+char uniqid_local_ip[16];
+int local_ip_init = 0;
 
 static ngx_http_module_t  ngx_http_uniqid_module_ctx = {
     ngx_http_uniqid_preconf,       /* preconfiguration */
@@ -117,25 +121,19 @@ static ngx_int_t uniqid_add_variables(ngx_conf_t *cf)
 static ngx_int_t
 ngx_http_uniqid_handler(ngx_http_request_t *r)
 {
-    ngx_table_elt_t               *h, *ho;
+    ngx_table_elt_t         *h;
     ngx_http_uniqid_ctx_t   *ctx;
     ngx_http_uniqid_conf_t  *uscf;
-	ngx_list_part_t       *part;
-	ngx_table_elt_t       *header;
 
-	pid_t pid;
-	char *data;
+	//pid_t pid;
 	int size, ret;
 	ngx_str_t raw;
-	char *pip, *lip, *header_zipped;
+	char *pip, *lip;
 	uint64_t time_ms;
 	uniqid_udp_data *udata;
 	uniqid *uid, *puid;
 	uint16_t pport, lport;
-	struct timeval begin, end;
 	ngx_str_t key = ngx_string("Uniqid"), value;
-
-	int i;
 
 	uscf = ngx_http_get_module_srv_conf(r, ngx_http_uniqid_module);
 
@@ -160,12 +158,19 @@ ngx_http_uniqid_handler(ngx_http_request_t *r)
 	//gettimeofday(&begin, NULL);
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "uniqid handler");
 
-	pid = uniqid_request_get_pid();
+	//pid = uniqid_request_get_pid();
 	time_ms = uniqid_request_get_timems();
+
 	uid = uniqid_request_generate_uid(uscf->local_ip);
-	//ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid uid is %s", uid);
+	if (uid == NULL) {
+		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid generate uniqid failed");
+		return NGX_DECLINED;
+	}
 
 	puid = uniqid_request_get_uid(r);
+	if (uscf->id_only) {
+		goto id_only;
+	}
 	pip = uniqid_request_get_peerip(r);
 	pport = uniqid_request_get_peerport(r);
 	lip = uscf->local_ip;
@@ -174,22 +179,30 @@ ngx_http_uniqid_handler(ngx_http_request_t *r)
 	//ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid pport is %d, lport is %d", pport, lport);
 	
 	raw = ngx_http_uniqid_get_rawheader(r);
+	if (raw.len > MAX_HEADER_SIZE) {
+		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid ignore too big header");
+		return NGX_DECLINED;
+	}
 
 	udata = uniqid_generate_data(uid, puid, pip, pport, lip, lport, raw.len, raw.data);
 	size = UNIQID_DATA_SIZE + raw.len;
 
-	ret = sendto(uscf->sd, udata, size, MSG_DONTWAIT, (struct sockaddr *)&uscf->addr, sizeof(struct sockaddr));
+	ret = sendto(uscf->sd, udata, size, MSG_DONTWAIT, (struct sockaddr *)&uscf->addr, sizeof(struct sockaddr_un));
 	if (ret < size) {
-		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid send to unix socket failed: %d(%d)[%d], %s", ret, errno, EFAULT, strerror(errno));
+		if ((time_ms % 100) == 0) {
+			ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "uniqid send to unix socket failed: %d(%d)[%d], %s", ret, errno, EFAULT, strerror(errno));
+		}
 	}
 
 	free(udata);
+
+id_only:
 	ctx->done = 1;
-	strncpy(ctx->result, uid, UNIQID_SIZE);
+	strncpy(ctx->result, (const char *)uid, UNIQID_SIZE);
 
 	ngx_http_set_ctx(r, ctx, ngx_http_uniqid_module);
 	
-	gettimeofday(&end, NULL);
+	//gettimeofday(&end, NULL);
 	
 	if (puid) {
 		value.len = UNIQID_SIZE;
@@ -233,15 +246,19 @@ ngx_http_uniqid_srv_create_conf(ngx_conf_t *cf)
 
     conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_uniqid_conf_t));
     if (conf == NULL) {
-        return NGX_CONF_ERROR;
+        return NULL;
     }
-	if (get_local_ip(conf->local_ip) < 0) {
-		ngx_log_error(NGX_LOG_ERR, cf->log, 0, "init uniqid local ip from eth0 failed");
-		return NGX_CONF_ERROR;
-	}
-	
 
+	if (local_ip_init == 0) {
+		if (get_local_ip(uniqid_local_ip) < 0) {
+			ngx_log_error(NGX_LOG_ERR, cf->log, 0, "init uniqid local ip from hostname failed");
+			return NULL;
+		}
+		local_ip_init = 1;
+	}
+	memcpy(conf->local_ip, uniqid_local_ip, 16);
 	conf->off = 1;
+	conf->id_only = 0;
 	conf->socket_path.len = 0;
 	conf->sd = -1;
 	memset(&conf->addr, 0, sizeof(conf->addr));
@@ -276,17 +293,17 @@ ngx_http_uniqid_init(ngx_conf_t *cf)
 
 	*h = ngx_http_uniqid_handler;
 	
-
     return NGX_OK;
 }
 
 static char *
 ngx_http_uniqid_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-	int 				  i, len, uspos = 0;
-	int ret;
+	unsigned int i;
+	//int ret;
+	//int bufsize = 100000;
 	//char *pos, *cur, *sep, ip[32];
-    ngx_str_t            *value;
+    ngx_str_t    *value;
 	char path[1024];
 	//userver_t *us;
     ngx_http_uniqid_conf_t *uscf = conf;
@@ -294,6 +311,9 @@ ngx_http_uniqid_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     if (uscf->socket_path.len != 0) {
         return "is duplicate";
     }
+	if (uscf->off == 0) {
+		return "is duplicate";
+	}
 
     value = cf->args->elts;
 
@@ -309,10 +329,18 @@ ngx_http_uniqid_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 			if (uscf->sd < 0) {
 				return NGX_CONF_ERROR;
 			}
+			//ret = setsockopt(uscf->sd, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize));
+			//if (ret < 0) {
+			//	return NGX_CONF_ERROR;
+			//}
 
 			uscf->addr.sun_family = AF_UNIX;
 			strncpy(uscf->addr.sun_path, path, sizeof(uscf->addr.sun_path));
 
+			continue;
+		} else if (ngx_strncmp(value[i].data, "off", 3) == 0) {
+			uscf->off = 0;
+			uscf->id_only = 1;
 			continue;
 		}
 	}

@@ -1,9 +1,14 @@
 #include <netdb.h>
-#include <ifaddrs.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+//#include <ifaddrs.h>
 #include <arpa/inet.h>
 #include <ngx_core.h>
 #include <sys/socket.h>
 #include "uniqid_request.h"
+
+#define _GNU_SOURCE
 
 int
 ngx_http_replace_header(ngx_str_t *key, ngx_str_t *value, ngx_http_request_t *r)
@@ -134,30 +139,49 @@ uniqid *uniqid_request_get_uid(ngx_http_request_t *r)
 
 int get_local_ip(char *buf)
 {
-	struct ifaddrs *ifaddr, *ifa;
-	int family;
-	void *sa;
-
-	if (getifaddrs(&ifaddr) == -1) {
-		return -1;
-	}
-
-	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
-		if (ifa->ifa_addr == NULL)
-			continue;
-
-		family = ifa->ifa_addr->sa_family;
-
-		if (family == AF_INET && !strncmp(ifa->ifa_name, "eth0", 4)) {
-			sa = &((struct sockaddr_in *)ifa->ifa_addr)->sin_addr;
-			inet_ntop(AF_INET, sa, buf, INET_ADDRSTRLEN);
-			freeifaddrs(ifaddr);
-			return 0;
+	FILE *fp;
+	size_t size;
+	ssize_t res;
+	fp = popen("host `hostname` | awk '{print $NF}'", "r");
+	if(fp) {
+		res = getline(&buf, &size, fp);
+		if (res > 0) {
+			buf[res - 1] = 0;
 		}
+
+		pclose(fp);
+
+		if (strstr(buf, "NXDOMAIN") != NULL) {
+			return -1;
+		}
+		return 0;
 	}
 
-	freeifaddrs(ifaddr);
 	return -1;
+
+	//struct ifaddrs *ifaddr, *ifa;
+	//int family;
+	//void *sa;
+
+	//if (getifaddrs(&ifaddr) == -1) {
+	//	return -1;
+	//}
+
+	//for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+	//	if (ifa->ifa_addr == NULL)
+	//		continue;
+
+	//	family = ifa->ifa_addr->sa_family;
+
+	//	if (family == AF_INET && !strncmp(ifa->ifa_name, "eth0", 4)) {
+	//		sa = &((struct sockaddr_in *)ifa->ifa_addr)->sin_addr;
+	//		inet_ntop(AF_INET, sa, buf, INET_ADDRSTRLEN);
+	//		freeifaddrs(ifaddr);
+	//		return 0;
+	//	}
+	//}
+
+	//freeifaddrs(ifaddr);
 }
 
 pid_t uniqid_request_get_pid()
@@ -185,7 +209,7 @@ char *uniqid_request_get_localip(ngx_http_request_t *r)
 	}
 	
 	s.len = NGX_SOCKADDR_STRLEN;
-	s.data = addr;
+	s.data = (void *)addr;
 
 	if (ngx_connection_local_sockaddr(r->connection, &s, 0) != NGX_OK) {
 		return NULL;
@@ -271,7 +295,7 @@ char *uniqid_request_get_peerip_from_header(ngx_http_request_t *r)
 			return NULL;
 		}
 	} else {
-		pos = h[0]->value.data;
+		pos = (void *)h[0]->value.data;
 	}
 
 	strncpy(ip, pos, 16);
@@ -283,7 +307,8 @@ char *uniqid_request_get_peerip_from_header(ngx_http_request_t *r)
 char *uniqid_request_get_peerip(ngx_http_request_t *r)
 {
 	char *ip;
-	if (ip = uniqid_request_get_peerip_from_header(r)) {
+	ip = uniqid_request_get_peerip_from_header(r);
+	if (ip) {
 		return ip;
 	} else {
 		return uniqid_request_get_peerip_real(r);
@@ -322,33 +347,72 @@ ngx_str_t ngx_http_uniqid_get_rawheader(ngx_http_request_t *r)
 {
 	u_char *data;
 	ngx_str_t header;
-	int count = 0;
-	
-	header.len = r->header_in->last - r->header_in->start;
+	ngx_table_elt_t             *h;
+	ngx_list_part_t             *part;
+	int len = 0, pos = 0;
+	ngx_uint_t i;
+	header.data = NULL;
+	header.len = 0;
 
-	data = ngx_pcalloc(r->pool, header.len);
+	len += r->request_line.len + 2; /* 2 is '\r\n' */
+
+	part = &r->headers_in.headers.part;
+	h = part->elts;
+	for (i = 0; /* void */; i++) {
+		if (i >= part->nelts) {
+			if (part->next == NULL) {
+				break;
+			}
+
+			part = part->next;
+			h = part->elts;
+			i = 0;
+		}
+		len += h[i].key.len + h[i].value.len + 4; /* ": ", "\r\n"*/
+	}
+	len += 2; /* "terminal \r\n" */
+
+	data = ngx_pcalloc(r->pool, len);
 	if (data == NULL) {
-		header.data = NULL;
-		header.len = 0;
 		return header;
 	}
 
-	memcpy(data, r->header_in->start, header.len);
-
-	while (count < header.len) {
-		if (data[count] == 0) {
-			if (data[count + 1] == ' ') {
-				data[count] = ':';
-			} else if (data[count + 1] == '\n') {
-				data[count] = '\r';
+	memcpy(data, (void *)r->request_line.data, r->request_line.len);
+	pos += r->request_line.len;
+	data[pos] = '\r';
+	data[pos + 1] = '\n';
+	pos += 2;
+	//copy header
+	part = &r->headers_in.headers.part;
+	h = part->elts;
+	for (i = 0; /* void */; i++) {
+		if (i >= part->nelts) {
+			if (part->next == NULL) {
+				break;
 			}
+
+			part = part->next;
+			h = part->elts;
+			i = 0;
 		}
-		count++;
+
+		memcpy(data + pos, h[i].key.data, h[i].key.len);
+		pos += h[i].key.len;
+		data[pos] = ':';
+		data[pos + 1] = ' ';
+		pos += 2;
+		memcpy(data + pos, h[i].value.data, h[i].value.len);
+		pos += h[i].value.len;
+		data[pos] = '\r';
+		data[pos + 1] = '\n';
+		pos += 2;
 	}
+	data[pos] = '\r';
+	data[pos + 1] = '\n';
+	pos += 2;
 	
-
 	header.data = data;
-
+	header.len = len;
 	return header;
 }
 
