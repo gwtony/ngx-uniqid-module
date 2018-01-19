@@ -16,8 +16,6 @@ char *encode_to_hex(char *buff, const uint8_t *src, int len)
 		buff[i * 2 + 1] = hex_table[src[i] & 0xF];
 	}
 
-	buff[2 * len] = '\0';
-
 	return buff;
 }
 

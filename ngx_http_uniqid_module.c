@@ -181,6 +181,7 @@ ngx_http_uniqid_handler(ngx_http_request_t *r)
 	raw = ngx_http_uniqid_get_rawheader(r);
 	if (raw.len > MAX_HEADER_SIZE) {
 		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "uniqid ignore too big header");
+		free(uid);
 		return NGX_DECLINED;
 	}
 
@@ -211,6 +212,7 @@ id_only:
 	} else {
 		h = ngx_list_push(&r->headers_in.headers);
 		if (h == NULL) {
+			free(uid);
 			return NGX_HTTP_INTERNAL_SERVER_ERROR;
 		}
 
@@ -226,6 +228,7 @@ id_only:
 
 		h->lowcase_key = ngx_pnalloc(r->pool, h->key.len);
 		if (h->lowcase_key == NULL) {
+			free(uid);
 			return NGX_HTTP_INTERNAL_SERVER_ERROR;
 		}
 

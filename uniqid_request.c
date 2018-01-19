@@ -140,22 +140,36 @@ uniqid *uniqid_request_get_uid(ngx_http_request_t *r)
 int get_local_ip(char *buf)
 {
 	FILE *fp;
-	size_t size;
+	size_t size = 16;
 	ssize_t res;
+	char *tmp = malloc(16);
+	if (!tmp) {
+		return -1;
+	}
+
 	fp = popen("host `hostname` | awk '{print $NF}'", "r");
 	if(fp) {
-		res = getline(&buf, &size, fp);
-		if (res > 0) {
-			buf[res - 1] = 0;
-		}
+		res = getline(&tmp, &size, fp);
 
 		pclose(fp);
 
-		if (strstr(buf, "NXDOMAIN") != NULL) {
+		if (res > 0 && res <= 16) {
+			tmp[res - 1] = 0;
+		} else {
+			free(tmp);
 			return -1;
 		}
+
+		if (strstr(tmp, "NXDOMAIN") != NULL) {
+			free(tmp);
+			return -1;
+		}
+		strncpy(buf, tmp, res);
+		free(tmp);
 		return 0;
 	}
+
+	free(tmp);
 
 	return -1;
 
